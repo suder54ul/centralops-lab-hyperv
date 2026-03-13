@@ -55,9 +55,9 @@ foreach ($Server in $Servers) {
 }
 Use code with caution.
 
-4. Phase 3: VyOS Routing (Manual Configuration)
-Enter these commands into your VyOS CLI to bridge the subnets.
-bash
+# 4. Phase 3: VyOS Routing (Manual Configuration)
+# Enter these commands into your VyOS CLI to bridge the subnets.
+# bash
 configure
 set interfaces ethernet eth0 address 10.5.1.1/24
 set interfaces ethernet eth1 address 10.1.1.1/24

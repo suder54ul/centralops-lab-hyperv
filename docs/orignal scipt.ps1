@@ -1,11 +1,10 @@
-This is the final, end-to-end technical guide for your Windows Server 2025 Core infrastructure. This version utilizes a Global Variable Table for automation and clearly marks where VM Restarts and Manual Interventions are required.
+This is the final, comprehensive automation guide for your Windows Server 2025 Core infrastructure. It integrates the Gold Image strategy, Hyper-V automation, VyOS routing, and PowerShell-driven GPOs using a single global variable table.
 1. Global Configuration Table
-Define this in your VS Code environment. All subsequent scripts pull from this table.
+Define this in your VS Code environment. All scripts below reference these variables.
 powershell
 $GlobalConfig = @{
     # Domain & Identity
     DomainName      = "corp.local"
-    NetBIOSName     = "CORP"
     SafePassword    = (ConvertTo-SecureString "P@ssword123!" -AsPlainText -Force)
     AdminUser       = "admin01"
     StandardUser    = "user01"
@@ -21,21 +20,43 @@ $GlobalConfig = @{
     ReplicaDC_IP    = "10.1.1.10"
 
     # Infrastructure Paths
-    GoldImagePath   = "C:\VMs\GoldImage\W2025Core.vhdx"
-    WsusPath        = "D:\WSUS"
-    MirrorPath      = "D:\DefenderMirror"
+    GoldImagePath   = "C:\VMs\GoldImage\W2025Core.vhdx" # Must be Sysprepped
+    VMStorageRoot   = "C:\Hyper-V\Virtual Machines"
+    VMSwitchName    = "Internal-Switch" # Ensure this exists in Hyper-V
 }
 Use code with caution.
 
-2. Phase 1: The Gold Image (Manual Preparation)
-The Gold Image must be prepared manually before any automation begins.
-Install OS: Install Windows Server 2025 Core.
-Config: Run sconfig to set the timezone and install all Windows Updates.
-Sysprep: Open PowerShell and run:
+2. Phase 1: Manual Gold Image Preparation
+Install OS: Install Windows Server 2025 Core on a temporary VM.
+Config: Run sconfig to install all Windows Updates.
+Sysprep: In PowerShell, run:
 C:\Windows\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /mode:vm
-RESTART/SHUTDOWN: The VM will shut down. Do not turn it back on. This is now your Master Template.
-3. Phase 2: VyOS Firewall (Manual Intervention)
-You must manually enter these commands into your VyOS CLI to enable the bridge.
+MANUAL STEP: The VM shuts down. Move this .vhdx to the path in $GlobalConfig.GoldImagePath. Do not power it on again.
+3. Phase 2: Automated Hyper-V VM Creation
+Run this script on your Hyper-V Host to spawn the three servers using Differencing Disks (saving space and time).
+powershell
+$Servers = @(
+    @{Name="SRV-DC-01"; RAM=4GB},
+    @{Name="SRV-DC-02"; RAM=4GB},
+    @{Name="SRV-MGMT-01"; RAM=8GB}
+)
+
+foreach ($Server in $Servers) {
+    $VMPath = Join-Path $GlobalConfig.VMStorageRoot $Server.Name
+    New-Item -Path $VMPath -ItemType Directory -Force
+    
+    # 1. Create Differencing Disk from Gold Image
+    $VHDPath = Join-Path $VMPath "$($Server.Name).vhdx"
+    New-VHD -ParentPath $GlobalConfig.GoldImagePath -Path $VHDPath -Differencing
+    
+    # 2. Create the VM
+    New-VM -Name $Server.Name -MemoryStartupBytes $Server.RAM -VHDPath $VHDPath -SwitchName $GlobalConfig.VMSwitchName -Path $VMPath
+    Set-VMMemory -VMName $Server.Name -DynamicMemoryEnabled $True -MinimumBytes 1GB -MaximumBytes $Server.RAM
+}
+Use code with caution.
+
+4. Phase 3: VyOS Routing (Manual Configuration)
+Enter these commands into your VyOS CLI to bridge the subnets.
 bash
 configure
 set interfaces ethernet eth0 address 10.5.1.1/24
@@ -44,91 +65,55 @@ set system ip forward 1
 set firewall name ALLOW_ALL default-action accept
 set firewall interface eth0 in name ALLOW_ALL
 set firewall interface eth1 in name ALLOW_ALL
-commit ; save ; exit
+commit ; save
 Use code with caution.
 
-4. Phase 3: Infrastructure Deployment (PowerShell)
-A. Primary DC (SRV-DC-01)
-Promote Forest:
+5. Phase 4: Server Roles & AD Promotion
+A. SRV-DC-01 (Primary DC)
+Promote: Install-ADDSForest -DomainName $GlobalConfig.DomainName -InstallDNS -Force
+RESTART: Server reboots automatically.
+Objects: Run New-ADUser and New-ADComputer commands for user01 and hmi01.
+Cloning Prep: Run New-ADDCCloneConfigFile with the $GlobalConfig.ReplicaDC_IP.
+SHUTDOWN: Power off to allow SRV-DC-02 to start as a clone.
+B. SRV-MGMT-01 (Update Hub)
+Roles: Install-WindowsFeature UpdateServices, Web-Server -IncludeManagementTools
+RESTART: Highly recommended after WSUS install.
+Post-Install:
 powershell
-Install-ADDSForest -DomainName $GlobalConfig.DomainName -InstallDNS -Force
+New-SmbShare -Name "DefenderUpdates" -Path "D:\DefenderMirror" -FullAccess "Everyone"
+& "wsusutil.exe" postinstall CONTENT_DIR=D:\WSUS
 Use code with caution.
 
-RESTART: The server will automatically reboot to finalize AD.
-Post-Reboot (Manual/Scripted): Log in and run the object creation:
+6. Phase 5: GPO Security Baseline (PowerShell Scripted)
+Run this on SRV-DC-01 to automate domain-wide policies.
 powershell
-# Create Objects
-New-ADUser -Name $GlobalConfig.StandardUser -SamAccountName $GlobalConfig.StandardUser -Enabled $true -AccountPassword $GlobalConfig.SafePassword
-New-ADUser -Name $GlobalConfig.AdminUser -SamAccountName $GlobalConfig.AdminUser -Enabled $true -AccountPassword $GlobalConfig.SafePassword
-Add-ADGroupMember -Identity "Domain Admins" -Members $GlobalConfig.AdminUser
-New-ADComputer -Name $GlobalConfig.HmiDevice -SamAccountName $GlobalConfig.HmiDevice
-
-# Authorize & Prep Cloning for DC-02
-Add-ADGroupMember -Identity "Cloneable Domain Controllers" -Members "SRV-DC-01$"
-Get-ADDCCloningExcludedApplicationList -GenerateXml
-New-ADDCCloneConfigFile -CloneComputerName "SRV-DC-02" -Static `
--IPv4Address $GlobalConfig.ReplicaDC_IP -IPv4SubnetMask "255.255.255.0" `
--IPv4DefaultGateway $GlobalConfig.ReplicaNet_GW -IPv4DNSResolver $GlobalConfig.PrimaryDC_IP
-Use code with caution.
-
-SHUTDOWN: Shut down SRV-DC-01 to perform the Hyper-V Clone.
-B. Replica DC (SRV-DC-02)
-Clone VM: Use Hyper-V to copy SRV-DC-01 (Select "Create new unique ID").
-RESTART: Power on SRV-DC-01 first, wait 2 minutes, then power on SRV-DC-02.
-Result: SRV-DC-02 will detect the XML file, rename itself, and reboot automatically.
-C. Update Hub (SRV-MGMT-01)
-Install Roles:
-powershell
-Install-WindowsFeature UpdateServices, Web-Server -IncludeManagementTools
-Use code with caution.
-
-RESTART: A restart is recommended after installing WSUS.
-Manual/Post-Install:
-powershell
-# Create Shares
-New-SmbShare -Name "DefenderUpdates" -Path $GlobalConfig.MirrorPath -FullAccess "Everyone"
-# Init WSUS
-& "C:\Program Files\Update Services\Tools\wsusutil.exe" postinstall CONTENT_DIR=$GlobalConfig.WsusPath
-Use code with caution.
-
-5. Phase 4: GPO Implementation (PowerShell Scripted)
-Run this on SRV-DC-01 after all servers are joined to the domain.
-powershell
-# 1. Password Policy
+# 1. Password Complexity
 Set-ADDefaultDomainPasswordPolicy -Identity $GlobalConfig.DomainName -MinPasswordLength 12 -MaxPasswordAge "90.00:00:00" -ComplexityEnabled $true
 
-# 2. Monthly Security Updates GPO
-$GPO_Update = New-GPO -Name "CORP-Update-Policy"
-Set-GPRegistryValue -Name "CORP-Update-Policy" -Key "HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate" -ValueName "WUServer" -Type String -Value "http://$($GlobalConfig.MgmtServer_IP):8530"
-Set-GPLink -Name "CORP-Update-Policy" -Target "dc=$($GlobalConfig.NetBIOSName),dc=local"
+# 2. Update Policy (Pointing to MGMT Server)
+$GPO_Update = New-GPO -Name "CORP-Updates"
+Set-GPRegistryValue -Name "CORP-Updates" -Key "HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate" -ValueName "WUServer" -Type String -Value "http://$($GlobalConfig.MgmtServer_IP):8530"
+Set-GPLink -Name "CORP-Updates" -Target "dc=corp,dc=local"
 
-# 3. HMI/Screensaver GPO
-$GPO_HMI = New-GPO -Name "CORP-HMI-Fix"
-Set-GPRegistryValue -Name "CORP-HMI-Fix" -Key "HKCU\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -ValueName "ScreenSaveActive" -Type String -Value "0"
-Set-GPLink -Name "CORP-HMI-Fix" -Target "dc=$($GlobalConfig.NetBIOSName),dc=local"
+# 3. Disable Screensaver (For HMI)
+$GPO_HMI = New-GPO -Name "CORP-HMI"
+Set-GPRegistryValue -Name "CORP-HMI" -Key "HKCU\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -ValueName "ScreenSaveActive" -Type String -Value "0"
+Set-GPLink -Name "CORP-HMI" -Target "dc=corp,dc=local"
 Use code with caution.
 
-6. Final Health Test (Automated Verification)
-Run this from your ADMIN-PC in VS Code.
+7. Final Automated Health Test
+Run this from your ADMIN-PC (10.5.1.50).
 powershell
-$Tests = @()
-# Verify VyOS Routing
-$Ping = Test-Connection -ComputerName $GlobalConfig.ReplicaDC_IP -Count 1 -Quiet
-$Tests += [PSCustomObject]@{Test="VyOS Routing (10.5 -> 10.1)"; Result=($Ping ? "PASS" : "FAIL")}
+$Report = @()
+# Test Routing across VyOS
+$PingDC2 = Test-Connection -ComputerName $GlobalConfig.ReplicaDC_IP -Count 1 -Quiet
+$Report += [PSCustomObject]@{Test="VyOS Routing"; Result=($PingDC2 ? "PASS" : "FAIL")}
 
-# Verify AD Replication
-$Rep = Invoke-Command -ComputerName $GlobalConfig.PrimaryDC_IP -ScriptBlock { repadmin /replsummary }
-$Tests += [PSCustomObject]@{Test="AD Replication Health"; Result=($Rep -match "0 errors" ? "PASS" : "FAIL")}
+# Test AD Sync
+$Repl = Invoke-Command -ComputerName $GlobalConfig.PrimaryDC_IP -ScriptBlock { repadmin /replsummary }
+$Report += [PSCustomObject]@{Test="AD Replication"; Result=($Repl -match "0 errors" ? "PASS" : "FAIL")}
 
-$Tests | Format-Table -AutoSize
+$Report | Format-Table -AutoSize
 Use code with caution.
 
-Key Resource Details:
-SRV-DC-01/02: 2 vCPU, 4GB RAM.
-SRV-MGMT-01: 2 vCPU, 8GB RAM (Critical for WSUS Java/SQL services).
-VyOS: 1 vCPU, 512MB RAM.
-Would you like the PowerShell script to automate the Hyper-V VM creation process from your Gold Image?
-
-
-
-
+Implementation Complete. You have a scalable, variable-driven Server Core 2025 environment.

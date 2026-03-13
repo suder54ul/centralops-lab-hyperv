@@ -12,6 +12,7 @@ PowerShell automation for a Hyper-V lab environment covering:
 - `config/lab.config.psd1` - environment-specific configuration values
 - `scripts/Deploy-CoreInfrastructure.ps1` - modular deployment script
 - `docs/VyOS-Setup.md` - VyOS command runbook
+- `docs/GoldImage-OneLiners.md` - first/second/next one-liner execution steps
 - `logs/` - transcript logs (auto-created at runtime)
 
 ## Prerequisites
@@ -48,6 +49,7 @@ PowerShell automation for a Hyper-V lab environment covering:
 1. Edit `config/lab.config.psd1` for your environment.
 2. Open elevated PowerShell for infrastructure stages (`HyperVDeploy`, `PrimaryDC`, `GPO`, `HealthCheck`).
 3. Run stages one at a time by role.
+4. For one-liner flow, use `docs/GoldImage-OneLiners.md`.
 
 ### Stage commands
 

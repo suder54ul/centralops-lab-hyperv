@@ -1,83 +1,68 @@
 # Server 2025 Core Infrastructure Deployment
 
-Production-style PowerShell automation for a Hyper-V lab:
+PowerShell automation for a Hyper-V lab environment covering:
 - Active Directory Domain Services (primary DC setup)
 - DNS configuration
 - Group Policy deployment
 - WSUS policy targeting
-- Multi-network topology with VyOS routing guidance
+- Multi-network routing with VyOS guidance
 
 ## Repository Structure
 
-- `config/lab.config.psd1` - all environment-specific values
+- `config/lab.config.psd1` - environment-specific configuration values
 - `scripts/Deploy-CoreInfrastructure.ps1` - modular deployment script
-- `docs/VyOS-Setup.md` - copy/paste VyOS router commands
-- `logs/` - generated transcript logs per execution (auto-created)
+- `docs/VyOS-Setup.md` - VyOS command runbook
+- `logs/` - transcript logs (auto-created at runtime)
 
 ## Prerequisites
 
-### Hyper-V Host (for `HyperVDeploy` stage)
-- Windows Server / Windows with Hyper-V enabled
-- Gold image exists at `GoldImagePath` in the config file
+### Hyper-V host (`HyperVDeploy`)
+- Hyper-V enabled on Windows host
+- Gold image VHDX exists at `GoldImagePath`
 - Virtual switches exist:
   - `AdminSwitch`
   - `ReplicaSwitch`
-- Run PowerShell as Administrator
+- Elevated PowerShell session
 
-### Primary Domain Controller VM (for `PrimaryDC`, `GPO`, `HealthCheck`)
-- Windows Server 2025 Core with static network configured
-- Required modules/features available:
+### Primary DC VM (`PrimaryDC`, `GPO`, `HealthCheck`)
+- Windows Server 2025 Core with static networking
+- Available modules/features:
   - `ADDSDeployment`
   - `ActiveDirectory`
   - `DnsServer`
   - `GroupPolicy` (for GPO stage)
-- Domain promotion reboot planning (script uses `-NoRebootOnCompletion`)
+- Reboot planned after domain promotion (`-NoRebootOnCompletion` is used)
 
-## Quick Start
+## Command Copy Safety
 
-1. Edit `config/lab.config.psd1` for your lab values.
-2. Open elevated PowerShell for infrastructure stages (`HyperVDeploy`, `PrimaryDC`, `GPO`, `HealthCheck`).
-3. Run one stage at a time by host role.
-
-### Show VyOS commands only
-
-```powershell
-.\scripts\Deploy-CoreInfrastructure.ps1 -Stages VyOSGuide
-```
-
-### Deploy Hyper-V VMs (run on Hyper-V host)
+- Copy commands from fenced code blocks only.
+- Ignore text such as `(http://_vscodecontentref_/...)` if it appears in chat/preview rendering.
+- Valid command example:
 
 ```powershell
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages HyperVDeploy
 ```
 
-### Configure primary DC (run inside SRV-DC-01)
+## Quick Start
+
+1. Edit `config/lab.config.psd1` for your environment.
+2. Open elevated PowerShell for infrastructure stages (`HyperVDeploy`, `PrimaryDC`, `GPO`, `HealthCheck`).
+3. Run stages one at a time by role.
+
+### Stage commands
 
 ```powershell
+.\scripts\Deploy-CoreInfrastructure.ps1 -Stages VyOSGuide
+.\scripts\Deploy-CoreInfrastructure.ps1 -Stages HyperVDeploy
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages PrimaryDC
-```
-
-### Apply GPO configuration (run inside SRV-DC-01 after promotion)
-
-```powershell
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages GPO
-```
-
-### Run health checks
-
-```powershell
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages @('HealthCheck','Summary')
 ```
 
-### Optional custom transcript path
+### Optional
 
 ```powershell
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages VyOSGuide -LogPath .\logs\vyos-only.log
-```
-
-### Dry-run for stages that support ShouldProcess
-
-```powershell
 .\scripts\Deploy-CoreInfrastructure.ps1 -Stages HyperVDeploy -WhatIf
 ```
 
@@ -85,7 +70,7 @@ Production-style PowerShell automation for a Hyper-V lab:
 
 1. `VyOSGuide`
 2. `HyperVDeploy`
-3. Boot/configure `SRV-DC-01` network and host name
+3. Boot/configure `SRV-DC-01` hostname and network
 4. `PrimaryDC`
 5. Reboot `SRV-DC-01`
 6. `GPO`
@@ -94,20 +79,17 @@ Production-style PowerShell automation for a Hyper-V lab:
 ## Security Notes
 
 - `SafePassword` is plain text in config for lab convenience.
-- For production, replace with a secure secret retrieval workflow (vault or prompt).
-- Restrict access to this repo if real credentials are used.
+- For production, use a secure secret source (vault or prompt).
+- Restrict repository access when real credentials are present.
 
-## Push to GitHub
+## Updating GitHub
 
 ```powershell
-git init
-git add .
-git commit -m "Initial Server 2025 core infrastructure automation"
-git branch -M main
-git remote add origin https://github.com/<your-user>/<your-repo>.git
-git push -u origin main
+git add README.md
+git commit -m "Clean README and command guidance"
+git push
 ```
 
 ## Disclaimer
 
-This automation is intended for lab and controlled infrastructure environments. Validate every stage in a non-production environment before broader use.
+Intended for lab and controlled environments. Validate all stages in non-production before broader use.

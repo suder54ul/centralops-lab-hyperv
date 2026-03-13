@@ -1,0 +1,19 @@
+# PowerShell / logs
+*.log
+*.tmp
+logs/
+
+# Hyper-V artifacts
+*.vhd
+*.vhdx
+*.avhdx
+
+# User-specific
+.vscode/
+*.user
+*.suo
+
+# Build / temp
+bin/
+obj/
+Temp/
